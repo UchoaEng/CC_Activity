@@ -1,3 +1,190 @@
+# Simple Movie Catalog
+
+Academic project for the **Computational Projects** course (Computer Science). It answers **problem scenario 3**: refactor a movie catalog that had been written entirely inside a single Servlet.
+
+[🇧🇷 Leia em português](#-português)
+
+---
+
+## 1. The problem
+
+A student implemented every feature of the catalog (full CRUD and search) directly in one Servlet. The result:
+
+- one huge class with dozens of mixed responsibilities;
+- SQL scattered and repeated across the file;
+- connection opening and closing duplicated in every operation;
+- validation rules copied between create and edit;
+- code impossible to test without starting a server and a database;
+- any rule change meant touching the same giant class.
+
+## 2. The solution
+
+The code was split into layers, each with a single responsibility:
+
+| Before (monolithic Servlet) | After |
+|---|---|
+| SQL inside the Servlet | All SQL isolated in `FilmeDAO` |
+| Repeated `DriverManager.getConnection` | A single `ConexaoFactory` |
+| Validation duplicated in create and edit | A single `FilmeService.validar` |
+| HTML built with `out.println` | JSP + JSTL in `WEB-INF/views` |
+| Impossible to test | `FilmeService` covered by 14 JUnit tests |
+
+Concrete gains:
+
+- **Testability:** `FilmeService` receives the DAO through its constructor, so tests inject an in-memory DAO and check the rules with no database and no server.
+- **No duplication:** insert and update share the same `preencherParametros`; result reading shares the same `mapear`.
+- **Security:** `PreparedStatement` in 100% of queries, never concatenating user input.
+- **Maintenance:** changing the database touches only `util`; changing a rule touches only `service`.
+
+## 3. Layers
+
+```
+Browser
+    │
+    ▼
+Controller  FilmeServlet          reads the request, calls the Service, picks the view
+    │                             (no SQL, no business rules)
+    ▼
+Service     FilmeService          validation and business rules
+    │
+    ▼
+DAO         FilmeDAO              all JDBC operations
+    │
+    ▼
+Util        ConexaoFactory        single place that opens connections
+            InicializadorBanco    creates the table and seed data
+            FiltroCodificacao     enforces UTF-8 on request and response
+
+Model       Filme                 domain entity, no HTTP or JDBC dependency
+Exception   ValidacaoException    groups validation messages
+            RegistroNaoEncontradoException / PersistenciaException
+View        JSP + JSTL            presentation, protected under WEB-INF
+```
+
+| Layer | Package | Role |
+|---|---|---|
+| Model | `br.edu.catalogo.model` | `Filme` entity (`id`, `titulo`, `diretor`, `ano`, `genero`, `sinopse`) |
+| DAO | `br.edu.catalogo.dao` | `inserir`, `listarTodos`, `buscarPorId`, `buscarPorTituloOuDiretor`, `atualizar`, `excluir` |
+| Service | `br.edu.catalogo.service` | Required fields, year range, lengths, missing-record detection |
+| Controller | `br.edu.catalogo.controller` | HTTP routing, form reading, view selection, Post/Redirect/Get |
+| View | `src/main/webapp` | JSP with JSTL and responsive CSS |
+| Util | `br.edu.catalogo.util` | Connection, database bootstrap, encoding filter |
+
+## 4. Tech
+
+Java 17 · Maven · Jakarta Servlet 6.0 · JSP + JSTL 3.0 (`jakarta.tags.core`) · plain JDBC · H2 database (local file) · Apache Tomcat 10.1 · HTML5 and CSS3 (no framework) · JUnit 5
+
+No Spring, no Hibernate, no Lombok: Servlet, JDBC and object-oriented concepts stay visible in the code.
+
+## 5. Prerequisites
+
+- JDK 17 with `JAVA_HOME` pointing to it
+- Maven 3.8+
+- Apache Tomcat 10.1 (only to run; not needed to build and test)
+
+Quick check: `java -version` and `mvn -v`.
+
+## 6. Build and test
+
+```bash
+mvn test                  # tests only
+mvn clean test package    # build, test and package
+```
+
+The WAR is generated at `target/catalogo-filmes.war`.
+
+## 7. Run on Tomcat 10
+
+1. Build the WAR with `mvn clean test package`.
+2. Copy `target/catalogo-filmes.war` to Tomcat 10's `webapps` folder.
+3. Set `CATALINA_HOME` and start Tomcat.
+
+   Windows (PowerShell):
+
+   ```powershell
+   $env:CATALINA_HOME="C:\path\to\apache-tomcat-10.1.59"
+   & "$env:CATALINA_HOME\bin\startup.bat"
+   ```
+
+   Linux/macOS:
+
+   ```bash
+   export CATALINA_HOME=/path/to/apache-tomcat-10.1.59
+   "$CATALINA_HOME/bin/startup.sh"
+   ```
+
+   > **Heads up:** without `CATALINA_HOME`, `startup.bat` looks for Tomcat in the terminal's **current directory**, not the script's folder. Calling the script by full path from another folder fails with `The CATALINA_HOME environment variable is not defined correctly`.
+
+4. Wait for Tomcat to expand the WAR (a `webapps/catalogo-filmes` folder appears).
+5. To stop, use `shutdown.bat` (or `shutdown.sh`) with the same variable set.
+
+`InicializadorBanco` creates the `filmes` table on startup and inserts three demo movies only when the table is empty, so restarting doesn't duplicate records.
+
+**URL:** `http://localhost:8080/catalogo-filmes/` (the root redirects to `/catalogo-filmes/filmes`).
+
+**Credentials:** the app **has no login**. The H2 database is created at `data/catalogo-filmes.mv.db`, relative to Tomcat's working directory, with user `sa` and an empty password (local development default).
+
+## 8. Directory structure
+
+```
+CC_Activity/
+├── pom.xml
+├── README.md
+└── src
+    ├── main
+    │   ├── java/br/edu/catalogo
+    │   │   ├── controller/FilmeServlet.java
+    │   │   ├── dao/FilmeDAO.java
+    │   │   ├── exception/   (PersistenciaException, RegistroNaoEncontradoException, ValidacaoException)
+    │   │   ├── model/Filme.java
+    │   │   ├── service/FilmeService.java
+    │   │   └── util/        (ConexaoFactory, FiltroCodificacao, InicializadorBanco)
+    │   └── webapp
+    │       ├── index.jsp
+    │       ├── assets/css/style.css
+    │       └── WEB-INF/     (web.xml, views/erro.jsp, views/fragmentos, views/filmes)
+    └── test
+        └── java/br/edu/catalogo/service/FilmeServiceTest.java
+```
+
+## 9. Features
+
+| # | Feature | Route |
+|---|---|---|
+| 1 | List all movies | `GET /filmes` |
+| 2 | Search by title or director | `GET /filmes?busca=term` |
+| 3 | Open the create form | `GET /filmes/novo` |
+| 4 | Create a movie | `POST /filmes` |
+| 5 | View details | `GET /filmes/{id}` |
+| 6 | Open the edit form | `GET /filmes/{id}/editar` |
+| 7 | Save edits | `POST /filmes/{id}` |
+| 8 | Delete confirmation page | `GET /filmes/{id}/excluir` |
+| 9 | Delete a movie | `POST /filmes/{id}/excluir` |
+
+Supporting behavior:
+
+- **Validation:** title and director required; year required and between 1888 and the current year plus 5; length limits on every field. All messages show at once.
+- **Friendly messages:** green confirmation after create, edit and delete; red error list on the form.
+- **Double-confirmed deletion:** a dedicated page plus a browser `confirm`.
+- **Error page:** missing record (404), invalid URL (400) and internal failure (500) land on `erro.jsp` with friendly text; technical details go to the server log.
+- **Post/Redirect/Get:** after saving, the browser is redirected, so refreshing doesn't resubmit the form.
+- **Responsive UI:** on narrow screens the table turns into stacked cards.
+
+## 10. Tests
+
+`FilmeServiceTest` covers the business rules with an in-memory DAO, no database or server: required title, required director, required year, year below the minimum and too far in the future, multiple errors in one response, valid creation with assigned id and trimmed fields, updating a missing record and updating without id, validation running before saving, lookup and deletion of a missing id, and an empty search term returning the full catalog.
+
+Last run:
+
+```
+Tests run: 14, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+---
+
+## 🇧🇷 Português
+
 # Catálogo Simples de Filmes
 
 Projeto acadêmico da disciplina **Projetos Computacionais** — Ciência da Computação.
@@ -173,7 +360,7 @@ Tomcat, com usuário `sa` e senha vazia (padrão de desenvolvimento local).
 ## 8. Estrutura de diretórios
 
 ```
-catalogo-filmes/
+CC_Activity/
 ├── pom.xml
 ├── README.md
 └── src
